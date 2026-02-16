@@ -9,10 +9,12 @@ from theme import COLORS
 class TrackList(ttk.Frame):
     """Reorderable track list with drop zone, treeview, and remove button."""
 
-    def __init__(self, parent, on_change=None):
+    def __init__(self, parent, on_change=None, on_play_track=None):
         super().__init__(parent)
         self.tracks: list[Track] = []
         self.on_change = on_change  # callback when tracks change
+        self.on_play_track = on_play_track  # callback when play icon clicked
+        self._playing_track: Track | None = None
         self._drag_source = None
         self._build_ui()
 
@@ -31,13 +33,15 @@ class TrackList(ttk.Frame):
         self.drop_label.bind("<Button-1>", self._on_click_add)
 
         # Treeview
-        columns = ("num", "title", "duration", "filename", "remove")
+        columns = ("play", "num", "title", "duration", "filename", "remove")
         self.tree = ttk.Treeview(self, columns=columns, show="headings", selectmode="extended")
+        self.tree.heading("play", text="")
         self.tree.heading("num", text="#")
         self.tree.heading("title", text="Title")
         self.tree.heading("duration", text="Duration")
         self.tree.heading("filename", text="Original File")
         self.tree.heading("remove", text="")
+        self.tree.column("play", width=30, minwidth=30, stretch=False)
         self.tree.column("num", width=40, minwidth=40, stretch=False)
         self.tree.column("title", width=200, minwidth=100)
         self.tree.column("duration", width=70, minwidth=60, stretch=False)
@@ -100,12 +104,16 @@ class TrackList(ttk.Frame):
     def _on_tree_click(self, event):
         region = self.tree.identify_region(event.x, event.y)
         col = self.tree.identify_column(event.x)
-        if col == "#5" and region == "cell":  # remove column
-            item = self.tree.identify_row(event.y)
-            if item:
-                idx = self.tree.index(item)
-                self.tracks.pop(idx)
-                self._refresh()
+        item = self.tree.identify_row(event.y)
+        if not item or region != "cell":
+            return
+        idx = self.tree.index(item)
+        if col == "#1":  # play column
+            if self.on_play_track and idx < len(self.tracks):
+                self.on_play_track(self.tracks[idx])
+        elif col == "#6":  # remove column
+            self.tracks.pop(idx)
+            self._refresh()
 
     # --- Drag reorder ---
     def _on_press(self, event):
@@ -136,7 +144,9 @@ class TrackList(ttk.Frame):
         self.tree.delete(*self.tree.get_children())
         for i, t in enumerate(self.tracks, 1):
             mins, secs = divmod(int(t.duration_secs), 60)
+            icon = "\u23f8" if (self._playing_track and t.source_path == self._playing_track.source_path) else "\u25b6"
             self.tree.insert("", "end", values=(
+                icon,
                 f"{i:02d}",
                 t.title,
                 f"{mins}:{secs:02d}",
@@ -146,6 +156,19 @@ class TrackList(ttk.Frame):
         self._update_empty_state()
         if self.on_change:
             self.on_change()
+
+    def update_playing_indicator(self, track: "Track | None"):
+        """Update which row shows the pause icon vs play icon."""
+        self._playing_track = track
+        # Update icons in-place without full refresh to avoid disrupting selection
+        for child in self.tree.get_children():
+            values = list(self.tree.item(child, "values"))
+            idx = self.tree.index(child)
+            if idx < len(self.tracks):
+                t = self.tracks[idx]
+                icon = "\u23f8" if (track and t.source_path == track.source_path) else "\u25b6"
+                values[0] = icon
+                self.tree.item(child, values=values)
 
     def _update_empty_state(self):
         if not self.tracks:

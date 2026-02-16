@@ -7,6 +7,7 @@ from models import AlbumProject
 from track_list import TrackList
 from album_service import export_album
 from project_io import save_project, load_project
+from audio_player import AudioPlayer
 
 
 class App(ttk.Frame):
@@ -15,9 +16,12 @@ class App(ttk.Frame):
         self.root = root
         self.project = AlbumProject()
         self.output_dir: str = ""
+        self.player = AudioPlayer()
         self.pack(fill="both", expand=True)
         self._build_ui()
         self._update_duration()
+        self._poll_playback()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self):
         # Header
@@ -37,11 +41,23 @@ class App(ttk.Frame):
         left.rowconfigure(0, weight=1)
         left.columnconfigure(0, weight=1)
 
-        self.track_list = TrackList(left, on_change=self._on_tracks_changed)
+        self.track_list = TrackList(left, on_change=self._on_tracks_changed,
+                                     on_play_track=self._on_play_track)
         self.track_list.grid(row=0, column=0, sticky="nsew")
 
+        # Now-playing bar
+        self.np_frame = tk.Frame(left, bg=COLORS["bg_light"], height=32)
+        self.np_frame.grid(row=1, column=0, sticky="ew", pady=(2, 0))
+        self.np_frame.grid_propagate(False)
+        self.np_frame.columnconfigure(0, weight=1)
+        self.np_label = ttk.Label(self.np_frame, text="Stopped", style="Playing.TLabel")
+        self.np_label.grid(row=0, column=0, sticky="w", padx=8, pady=4)
+        self.stop_btn = ttk.Button(self.np_frame, text="\u25a0 Stop",
+                                    command=self._stop_playback)
+        self.stop_btn.grid(row=0, column=1, padx=(0, 5), pady=2)
+
         btn_frame = ttk.Frame(left)
-        btn_frame.grid(row=1, column=0, sticky="ew", pady=(2, 5))
+        btn_frame.grid(row=2, column=0, sticky="ew", pady=(2, 5))
         ttk.Button(btn_frame, text="Remove Selected",
                    command=self.track_list.remove_selected).pack(side="left")
 
@@ -194,8 +210,46 @@ class App(ttk.Frame):
         proj = load_project(parent=self.root)
         if proj is None:
             return
+        self._stop_playback()
         self.project = proj
         self.band_var.set(proj.band_name)
         self.album_var.set(proj.album_name)
         self.track_list.tracks = list(proj.tracks)
         self.track_list._refresh()
+
+    # --- Playback ---
+    def _on_play_track(self, track):
+        if self.player.current_track and track.source_path == self.player.current_track.source_path:
+            if self.player.is_paused:
+                self.player.resume()
+            else:
+                self.player.pause()
+        else:
+            self.player.stop()
+            self.player.play(track)
+        self._update_now_playing()
+
+    def _stop_playback(self):
+        self.player.stop()
+        self._update_now_playing()
+
+    def _update_now_playing(self):
+        track = self.player.current_track
+        if track and (self.player.is_playing or self.player.is_paused):
+            state = "Paused" if self.player.is_paused else "\u25b6 Now Playing"
+            self.np_label.configure(text=f"{state}: {track.title}")
+            self.track_list.update_playing_indicator(track if self.player.is_playing else None)
+        else:
+            self.np_label.configure(text="Stopped")
+            self.track_list.update_playing_indicator(None)
+
+    def _poll_playback(self):
+        """Poll pygame mixer to detect when a track finishes."""
+        if self.player.current_track and not self.player.is_playing and not self.player.is_paused:
+            self.player.current_track = None
+            self._update_now_playing()
+        self.root.after(500, self._poll_playback)
+
+    def _on_close(self):
+        self.player.cleanup()
+        self.root.destroy()

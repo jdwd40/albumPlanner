@@ -57,3 +57,5 @@ def apply_theme(root: tk.Tk):
                      font=("Segoe UI", 18, "bold"))
     style.configure("Warning.TLabel", background=COLORS["bg"], foreground=COLORS["red"],
                      font=("Segoe UI", 10, "bold"))
+    style.configure("Playing.TLabel", background=COLORS["bg_light"],
+                     foreground=COLORS["accent"], font=("Segoe UI", 10))
